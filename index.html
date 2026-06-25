@@ -9,42 +9,733 @@
 </style>
 </head>
 <body>
-<main class="page"><h1>佩里科岛背包分配器</h1><section class="layout"><section class="panel"><div class="head"><div><h2>参数</h2><p class="desc">修改后需点击“生成方案”。</p></div></div><div class="section"><div class="box"><div><div class="label">人数</div><div class="hint">2—4人</div></div><div class="picker" role="group" aria-label="参与人数"><button type="button" data-player-count="2">2人</button><button type="button" data-player-count="3">3人</button><button class="active" type="button" data-player-count="4">4人</button></div></div></div><div class="section"><div class="box"><div><div class="label">模式</div><div class="hint">满包 / 收益</div></div><div class="mode" role="group" aria-label="优化模式"><button class="active" type="button" data-mode="strict">满包</button><button type="button" data-mode="profit">收益</button></div></div></div><div class="inputs" id="inputs"></div><div class="actions"><button class="primary" id="calculateBtn">生成方案</button><button class="secondary" id="clearBtn">清空</button></div></section><section class="panel"><div class="head"><div><h2>方案</h2><p class="desc">同类物资优先集中拿同一堆。</p></div><button class="chip" id="copyBtn">复制</button></div><div class="results"><div class="metrics"><div class="metric"><span>可用</span><strong id="availableMetric">—</strong></div><div class="metric"><span>装载</span><strong id="usedMetric">—</strong></div><div class="metric"><span>满包</span><strong id="fullMetric">0 / 4</strong></div><div class="metric"><span>收益</span><strong id="valueMetric">—</strong></div></div><div class="status warn" id="statusBanner"><div class="mark">!</div><div><b id="statusTitle">等待生成方案</b><span id="statusText">普通物资可补满截断；同类物资优先集中同一堆。</span></div></div><div class="players" id="players"></div><div class="unused"><div class="unusedTitle">未使用 / 未拿完</div><div class="tags" id="unusedList"><span class="tag">点击“生成方案”后显示</span></div></div></div></section></section></main><div class="toast" id="toast">已复制</div>
+<main class="page"><h1>佩里科岛背包分配器</h1><section class="layout"><section class="panel"><div class="head"><div><h2>参数</h2><p class="desc">修改后需点击“生成方案”。</p></div></div><div class="section"><div class="box"><div><div class="label">人数</div><div class="hint">2—4人</div></div><div class="picker" role="group" aria-label="参与人数"><button type="button" data-player-count="2">2人</button><button type="button" data-player-count="3">3人</button><button class="active" type="button" data-player-count="4">4人</button></div></div></div><div class="section"><div class="box"><div><div class="label">模式</div><div class="hint">满包 / 收益</div></div><div class="mode" role="group" aria-label="优化模式"><button class="active" type="button" data-mode="strict">满包</button><button type="button" data-mode="profit">收益</button></div></div></div><div class="inputs" id="inputs"></div><div class="actions"><button class="primary" id="calculateBtn">生成方案</button><button class="secondary" id="clearBtn">清空</button></div></section><section class="panel"><div class="head"><div><h2>方案</h2><p class="desc">优先让每个人接触堆数最少。</p></div><button class="chip" id="copyBtn">复制</button></div><div class="results"><div class="metrics"><div class="metric"><span>可用</span><strong id="availableMetric">—</strong></div><div class="metric"><span>装载</span><strong id="usedMetric">—</strong></div><div class="metric"><span>满包</span><strong id="fullMetric">0 / 4</strong></div><div class="metric"><span>收益</span><strong id="valueMetric">—</strong></div></div><div class="status warn" id="statusBanner"><div class="mark">!</div><div><b id="statusTitle">等待生成方案</b><span id="statusText">普通物资可补满截断；优先让每个人接触堆数最少。</span></div></div><div class="players" id="players"></div><div class="unused"><div class="unusedTitle">未使用 / 未拿完</div><div class="tags" id="unusedList"><span class="tag">点击“生成方案”后显示</span></div></div></div></section></section></main><div class="toast" id="toast">已复制</div>
 <script>
 "use strict";
-const PLAYER_CAPACITY=1800,MAX_COUNT=24,MAX_TOUCHES=4,TOP_PLANS=70,MAX_SEARCH_NODES=4200;
-let playerCount=4,mode="strict",latestResult=null;
-const TYPES=[{key:"gold",name:"黄金",icon:"🪙",noun:"堆",order:4,sequence:[100,200,100,200,200,200,200],averageValue:331000,clamp:true},{key:"cocaine",name:"可卡因",icon:"📦",noun:"堆",order:0,sequence:[100,100,80,60,40,80,120,120,160,40],averageValue:200000,clamp:true},{key:"weed",name:"大麻",icon:"🌿",noun:"堆",order:1,sequence:[75,75,60,45,30,60,90,90,120,30],averageValue:132750,clamp:true},{key:"artwork",name:"画作",icon:"🖼️",noun:"幅",order:3,sequence:[900],averageValue:168750,clamp:false},{key:"cash",name:"现金",icon:"💵",noun:"堆",order:2,sequence:[50,50,40,30,20,40,60,60,80,20],averageValue:81000,clamp:true}].map((t,priority)=>{const total=t.sequence.reduce((a,b)=>a+b,0);return{...t,priority,totalUnits:total,valuePerUnit:t.averageValue/total}});
-const typeMap=Object.fromEntries(TYPES.map(t=>[t.key,t])),inputContainer=document.getElementById("inputs"),playersContainer=document.getElementById("players");
-function fmtNum(v){return v.toFixed(1).replace(/\.0$/,"")}function pct(units){return fmtNum(units*100/PLAYER_CAPACITY)+"%"}function money(v){return "$"+Math.round(v).toLocaleString("en-US")}
-function createInputs(){inputContainer.innerHTML=TYPES.map(t=>{const countText=t.sequence.length===1?"每幅1次":`每堆${t.sequence.length}下`;return `<div class="row"><div><div class="name"><span class="ico">${t.icon}</span><span>${t.name}</span></div><div class="meta">每${t.noun}${pct(t.totalUnits)} · ${countText} · 约${money(t.averageValue)}/${t.noun}</div></div><div class="numBox"><button type="button" data-step="-1" data-key="${t.key}">−</button><input id="${t.key}" type="number" min="0" max="${MAX_COUNT}" step="1" value="0" inputmode="numeric" /><button type="button" data-step="1" data-key="${t.key}">+</button></div></div>`}).join("")}
-function getCounts(){const counts={};for(const t of TYPES){const v=Number(document.getElementById(t.key).value);counts[t.key]=Number.isFinite(v)?Math.max(0,Math.min(MAX_COUNT,Math.floor(v))):0}return counts}function setCounts(values){for(const t of TYPES)document.getElementById(t.key).value=values[t.key]??0;markDirty("参数已修改，点击“生成方案”。")}
-function buildPiles(counts){const piles=[];for(const t of TYPES){for(let i=0;i<counts[t.key];i++){piles.push({id:`${t.key}-${i+1}`,typeKey:t.key,typeName:t.name,pileNumber:i+1,order:t.order,sequence:[...t.sequence],next:0,users:0,valuePerUnit:t.valuePerUnit,clamp:t.clamp})}}return piles}function clonePiles(piles){return piles.map(p=>({...p,sequence:[...p.sequence]}))}function remainingTotalUnits(piles){return piles.reduce((sum,p)=>sum+p.sequence.slice(p.next).reduce((a,b)=>a+b,0),0)}
-function availablePileIndexes(piles,minOrder,usedPileIds){const byType=new Map();piles.forEach((p,idx)=>{if(p.next>=p.sequence.length||p.users>=2||p.order<minOrder||usedPileIds.has(p.id))return;if(!byType.has(p.typeKey))byType.set(p.typeKey,[]);byType.get(p.typeKey).push(idx)});const result=[];for(const [,indexes]of byType.entries()){indexes.sort((a,b)=>piles[a].users-piles[b].users||piles[b].next-piles[a].next||piles[a].pileNumber-piles[b].pileNumber);result.push(...indexes.slice(0,4))}return result.sort((a,b)=>piles[a].order-piles[b].order||typeMap[piles[a].typeKey].priority-typeMap[piles[b].typeKey].priority||piles[a].pileNumber-piles[b].pileNumber)}
-function segmentUnits(pile,startIndex,count,remainingCapacity){let nominal=0,actual=0,clamped=false,lastNominal=0,lastActual=0;for(let i=0;i<count;i++){const unit=pile.sequence[startIndex+i];nominal+=unit;lastNominal=unit;if(pile.clamp){const room=remainingCapacity-actual;if(unit>=room){actual+=room;lastActual=room;clamped=unit>room;return{nominal,actual,clamped,lastNominal,lastActual}}actual+=unit;lastActual=unit}else{if(actual+unit>remainingCapacity)return null;actual+=unit;lastActual=unit}}return{nominal,actual,clamped,lastNominal,lastActual}}
-function makeSegment(piles,pileIndex,count,currentLoad){const pile=piles[pileIndex],remaining=PLAYER_CAPACITY-currentLoad,info=segmentUnits(pile,pile.next,count,remaining);if(!info||info.actual<=0)return null;return{pileIndex,pileId:pile.id,typeKey:pile.typeKey,typeName:pile.typeName,pileNumber:pile.pileNumber,start:pile.next+1,end:pile.next+count,count,nominalUnits:info.nominal,units:info.actual,clamped:info.clamped,lastNominal:info.lastNominal,lastActual:info.lastActual,value:info.actual*pile.valuePerUnit,order:pile.order}}
-function sameTypePilePenalty(segments){const byType=new Map();for(const s of segments){if(!byType.has(s.typeKey))byType.set(s.typeKey,new Set());byType.get(s.typeKey).add(s.pileId)}let penalty=0;for(const set of byType.values())penalty+=Math.max(0,set.size-1);return penalty}
-function segmentCountPenalty(segments){return segments.length}
-function planBetterSort(a,b){const typeA=a.sameTypePenalty??sameTypePilePenalty(a.segments||[]),typeB=b.sameTypePenalty??sameTypePilePenalty(b.segments||[]),segA=a.segmentCount??segmentCountPenalty(a.segments||[]),segB=b.segmentCount??segmentCountPenalty(b.segments||[]);if(mode==="profit"){return b.value-a.value||b.units-a.units||a.touches-b.touches||typeA-typeB||segA-segB}return b.units-a.units||a.touches-b.touches||typeA-typeB||segA-segB||b.value-a.value}
-function enrichPlan(plan){plan.touches=new Set((plan.segments||[]).map(s=>s.pileId)).size;plan.sameTypePenalty=sameTypePilePenalty(plan.segments||[]);plan.segmentCount=segmentCountPenalty(plan.segments||[]);return plan}
-function addPlanCandidate(list,plan){list.push(enrichPlan(plan));list.sort(planBetterSort);if(list.length>TOP_PLANS)list.length=TOP_PLANS}
-function generatePlans(piles){const candidates=[{segments:[],units:0,value:0,touches:0}];function dfs(minOrder,load,value,segments,usedPileIds){if(segments.length>0)addPlanCandidate(candidates,{segments:segments.map(s=>({...s})),units:load,value,touches:new Set(segments.map(s=>s.pileId)).size});if(load>=PLAYER_CAPACITY||segments.length>=MAX_TOUCHES)return;const indexes=availablePileIndexes(piles,minOrder,usedPileIds);for(const pileIndex of indexes){const pile=piles[pileIndex],remainingGrabs=pile.sequence.length-pile.next;for(let count=remainingGrabs;count>=1;count--){const seg=makeSegment(piles,pileIndex,count,load);if(!seg)continue;const nextSegments=segments.concat(seg),nextUsed=new Set(usedPileIds);nextUsed.add(pile.id);if(seg.clamped||load+seg.units>=PLAYER_CAPACITY){addPlanCandidate(candidates,{segments:nextSegments,units:PLAYER_CAPACITY,value:value+seg.value});continue}dfs(pile.order,load+seg.units,value+seg.value,nextSegments,nextUsed)}}}dfs(0,0,0,[],new Set());const seen=new Set(),unique=[];for(const plan of candidates){const sig=plan.segments.map(s=>`${s.pileId}:${s.start}-${s.end}:${s.clamped?1:0}`).join("|");if(seen.has(sig))continue;seen.add(sig);unique.push(enrichPlan(plan))}unique.sort(planBetterSort);return unique.slice(0,TOP_PLANS)}
-function applyPlan(piles,plan){const next=clonePiles(piles);for(const seg of plan.segments){const pile=next[seg.pileIndex];pile.next+=seg.count;pile.users+=1}return next}function splitCount(piles){return piles.filter(p=>p.users>1).length}
-function resultSameTypePenalty(players){let penalty=0;for(const p of players)penalty+=sameTypePilePenalty(p.segments||[]);return penalty}
-function resultSegmentPenalty(players){return players.reduce((sum,p)=>sum+(p.segments||[]).length,0)}
-function compareResult(a,b){if(!b)return true;const typeA=a.sameTypePenalty??resultSameTypePenalty(a.players),typeB=b.sameTypePenalty??resultSameTypePenalty(b.players),segA=a.segmentPenalty??resultSegmentPenalty(a.players),segB=b.segmentPenalty??resultSegmentPenalty(b.players);if(mode==="profit"){if(Math.abs(a.value-b.value)>0.001)return a.value>b.value;if(a.units!==b.units)return a.units>b.units}else{if(a.units!==b.units)return a.units>b.units;if(a.splitCount!==b.splitCount)return a.splitCount<b.splitCount;if(a.maxPileTouches!==b.maxPileTouches)return a.maxPileTouches<b.maxPileTouches;if(a.totalPileTouches!==b.totalPileTouches)return a.totalPileTouches<b.totalPileTouches;if(typeA!==typeB)return typeA<typeB;if(segA!==segB)return segA<segB;if(Math.abs(a.value-b.value)>0.001)return a.value>b.value;return false}if(a.splitCount!==b.splitCount)return a.splitCount<b.splitCount;if(a.maxPileTouches!==b.maxPileTouches)return a.maxPileTouches<b.maxPileTouches;if(a.totalPileTouches!==b.totalPileTouches)return a.totalPileTouches<b.totalPileTouches;if(typeA!==typeB)return typeA<typeB;return segA<segB}
-function searchBest(initialPiles){let best=null,nodeCount=0;function recurse(playerIndex,piles,players){nodeCount++;if(nodeCount>MAX_SEARCH_NODES)return;const usedUnits=players.reduce((sum,p)=>sum+p.units,0),usedValue=players.reduce((sum,p)=>sum+p.value,0),remainingSlots=(playerCount-playerIndex)*PLAYER_CAPACITY,optimisticUnits=usedUnits+Math.min(remainingTotalUnits(piles),remainingSlots);if(mode==="strict"&&best&&optimisticUnits<best.units)return;if(playerIndex>=playerCount){const pileTouches=players.map(p=>new Set(p.segments.map(s=>s.pileId)).size),result={players,piles,units:usedUnits,value:usedValue,splitCount:splitCount(piles),maxPileTouches:pileTouches.length?Math.max(...pileTouches):0,totalPileTouches:pileTouches.reduce((a,b)=>a+b,0),sameTypePenalty:resultSameTypePenalty(players),segmentPenalty:resultSegmentPenalty(players),nodeCount};if(compareResult(result,best))best=result;return}const plans=generatePlans(piles);for(const plan of plans){const nextPlayers=players.concat({id:playerIndex+1,units:plan.units,value:plan.value,segments:plan.segments}),nextPiles=applyPlan(piles,plan);recurse(playerIndex+1,nextPiles,nextPlayers)}}recurse(0,clonePiles(initialPiles),[]);return best||{players:Array.from({length:playerCount},(_,i)=>({id:i+1,units:0,value:0,segments:[]})),piles:initialPiles,units:0,value:0,splitCount:0,maxPileTouches:0,totalPileTouches:0,nodeCount}}
-function calculateResult(){const start=performance.now(),counts=getCounts(),piles=buildPiles(counts),best=searchBest(piles),elapsed=performance.now()-start,availableUnits=piles.reduce((sum,p)=>sum+p.sequence.reduce((a,b)=>a+b,0),0);return{counts,availableUnits,usedUnits:best.units,value:best.value,players:best.players,piles:best.piles,splitCount:best.splitCount,maxPileTouches:best.maxPileTouches,totalPileTouches:best.totalPileTouches,sameTypePenalty:best.sameTypePenalty??resultSameTypePenalty(best.players),segmentPenalty:best.segmentPenalty??resultSegmentPenalty(best.players),elapsed,nodeCount:best.nodeCount||0,mode}}
-function segmentLabel(seg){const type=typeMap[seg.typeKey],word=type.sequence.length===1?"次":"下",range=seg.start===seg.end?`${seg.start}`:`${seg.start}—${seg.end}`;let text=`${seg.typeName}第${seg.pileNumber}${type.noun}第${range}${word}`;if(seg.clamped)text+=`，末下补满：计入${seg.lastActual}/${seg.lastNominal}`;return text}
-function renderPlayers(players){playersContainer.innerHTML=players.map(player=>{const pileCount=new Set(player.segments.map(s=>s.pileId)).size,loot=player.segments.map(seg=>{const type=typeMap[seg.typeKey],label=type.sequence.length===1?`${seg.count}幅`:`${seg.count}下`;return `<div class="line"><div class="lineMain"><span>${seg.typeName} ${label}</span><span>${pct(seg.units)}</span></div><div class="detail">${segmentLabel(seg)} · 约${money(seg.value)}</div></div>`}).join("");return `<article class="player"><div class="ptop"><div class="ptitle"><span class="num">${player.id}</span>${player.id}号玩家</div><strong>${pct(player.units)} · ${pileCount}堆</strong></div><div class="bar"><div style="width:${Math.min(100,player.units*100/PLAYER_CAPACITY)}%"></div></div><div class="loot">${loot||'<div class="empty">本局暂无可分配目标</div>'}</div></article>`}).join("")}
-function renderUnused(piles){const tags=[];for(const pile of piles){if(pile.next>=pile.sequence.length)continue;const type=typeMap[pile.typeKey];if(type.sequence.length===1)tags.push(`${type.name}第${pile.pileNumber}幅`);else if(pile.next===0)tags.push(`${type.name}第${pile.pileNumber}堆：未拿，共${pile.sequence.length}下`);else tags.push(`${type.name}第${pile.pileNumber}堆：已拿${pile.next}下，剩第${pile.next+1}—${pile.sequence.length}下`)}document.getElementById("unusedList").innerHTML=tags.length?tags.map(t=>`<span class="tag">${t}</span>`).join(""):'<span class="tag">已全部纳入方案</span>'}
-function renderResult(result){latestResult=result;const fullPlayers=result.players.filter(p=>p.units===PLAYER_CAPACITY).length;document.getElementById("availableMetric").textContent=pct(result.availableUnits);document.getElementById("usedMetric").textContent=pct(result.usedUnits);document.getElementById("fullMetric").textContent=`${fullPlayers} / ${playerCount}`;document.getElementById("valueMetric").textContent=money(result.value);const banner=document.getElementById("statusBanner"),mark=banner.querySelector(".mark"),title=document.getElementById("statusTitle"),text=document.getElementById("statusText");if(fullPlayers===playerCount){banner.classList.remove("warn");mark.textContent="✓";title.textContent=`可以达成${playerCount}人满载`}else{banner.classList.add("warn");mark.textContent="!";title.textContent=`当前方案可装满${fullPlayers}/${playerCount}人`}const modeText=result.mode==="strict"?"满包优先":"收益优先";text.textContent=`${modeText}；收益${money(result.value)}；拆分${result.splitCount}堆；每人最多接触${result.maxPileTouches}堆；同类散堆${result.sameTypePenalty??0}；耗时${fmtNum(result.elapsed)}ms。`;renderPlayers(result.players);renderUnused(result.piles)}
-function calculateAndRender(){renderResult(calculateResult())}function renderIdle(title="等待生成方案",text="普通物资可补满截断；同类物资优先集中同一堆。"){latestResult=null;document.getElementById("availableMetric").textContent="—";document.getElementById("usedMetric").textContent="—";document.getElementById("fullMetric").textContent=`0 / ${playerCount}`;document.getElementById("valueMetric").textContent="—";const banner=document.getElementById("statusBanner");banner.classList.add("warn");banner.querySelector(".mark").textContent="!";document.getElementById("statusTitle").textContent=title;document.getElementById("statusText").textContent=text;playersContainer.innerHTML="";document.getElementById("unusedList").innerHTML='<span class="tag">点击“生成方案”后显示</span>'}function markDirty(message="参数已修改，点击“生成方案”。"){renderIdle("参数已修改",message)}
-function buildCopyText(result){const fullPlayers=result.players.filter(p=>p.units===PLAYER_CAPACITY).length,lines=[`佩里科岛${playerCount}人背包装填方案`,`模式：${result.mode==="strict"?"满包优先":"收益优先"}`,`满包人数：${fullPlayers}/${playerCount}`,`总装载：${pct(result.usedUnits)}`,`预计收益：${money(result.value)}`,`规则：岛外物资 → 画作 → 黄金；普通物资末下可补满截断；同一堆最多2人`,""];for(const player of result.players){const pileCount=new Set(player.segments.map(s=>s.pileId)).size,parts=player.segments.map(s=>`${segmentLabel(s)}（${s.count}${typeMap[s.typeKey].sequence.length===1?"幅":"下"}）`);lines.push(`${player.id}号：${parts.length?parts.join(" + "):"无"}（${pct(player.units)}，涉及${pileCount}堆，约${money(player.value)}）`)}return lines.join("\n")}
-async function copyResult(){if(!latestResult){showToast("请先点击“生成方案”");return}const text=buildCopyText(latestResult);try{await navigator.clipboard.writeText(text)}catch(error){const textarea=document.createElement("textarea");textarea.value=text;textarea.style.position="fixed";textarea.style.opacity="0";document.body.appendChild(textarea);textarea.select();document.execCommand("copy");textarea.remove()}showToast("方案已复制")}function showToast(message){const toast=document.getElementById("toast");toast.textContent=message;toast.classList.add("show");clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>toast.classList.remove("show"),1500)}
-document.addEventListener("click",event=>{const countButton=event.target.closest("[data-player-count]");if(countButton){const next=Number(countButton.dataset.playerCount);if(Number.isInteger(next)&&next>=2&&next<=4){playerCount=next;document.querySelectorAll("[data-player-count]").forEach(button=>button.classList.toggle("active",Number(button.dataset.playerCount)===playerCount));markDirty(`人数已改为${playerCount}人，点击“生成方案”。`)}}const modeButton=event.target.closest("[data-mode]");if(modeButton){mode=modeButton.dataset.mode;document.querySelectorAll("[data-mode]").forEach(button=>button.classList.toggle("active",button.dataset.mode===mode));markDirty(`模式已切换为${mode==="strict"?"满包优先":"收益优先"}，点击“生成方案”。`)}const stepButton=event.target.closest("[data-step]");if(stepButton){const input=document.getElementById(stepButton.dataset.key),value=Number(input.value||0)+Number(stepButton.dataset.step);input.value=Math.max(0,Math.min(MAX_COUNT,Math.floor(value)));markDirty()}});
-inputContainer.addEventListener("input",event=>{if(!event.target.matches("input[type='number']"))return;const value=Number(event.target.value);if(!Number.isFinite(value)||value<0)event.target.value=0;if(value>MAX_COUNT)event.target.value=MAX_COUNT;markDirty()});
-document.getElementById("calculateBtn").addEventListener("click",calculateAndRender);document.getElementById("copyBtn").addEventListener("click",copyResult);document.getElementById("clearBtn").addEventListener("click",()=>setCounts({}));createInputs();renderIdle();
+
+const PLAYER_CAPACITY = 1800;
+const MAX_COUNT = 24;
+const MAX_TOUCHES = 4;
+const PLAYER_PLAN_BEAM = 140;
+const PLAYER_PLAN_OUTPUT = 50;
+const GLOBAL_BEAM = 180;
+const PROFIT_VALUE_BUCKET = 20000; // 收益差在约 $20,000 内时，优先操作简单。
+
+let playerCount = 4;
+let mode = "strict";
+let latestResult = null;
+
+const TYPES = [
+  {key:"gold", name:"黄金", icon:"🪙", noun:"堆", order:4, sequence:[100,200,100,200,200,200,200], averageValue:331000, clamp:true},
+  {key:"cocaine", name:"可卡因", icon:"📦", noun:"堆", order:0, sequence:[100,100,80,60,40,80,120,120,160,40], averageValue:200000, clamp:true},
+  {key:"weed", name:"大麻", icon:"🌿", noun:"堆", order:1, sequence:[75,75,60,45,30,60,90,90,120,30], averageValue:132750, clamp:true},
+  {key:"artwork", name:"画作", icon:"🖼️", noun:"幅", order:3, sequence:[900], averageValue:168750, clamp:false},
+  {key:"cash", name:"现金", icon:"💵", noun:"堆", order:2, sequence:[50,50,40,30,20,40,60,60,80,20], averageValue:81000, clamp:true}
+].map((t, priority) => {
+  const total = t.sequence.reduce((a,b)=>a+b,0);
+  return {...t, priority, totalUnits:total, valuePerUnit:t.averageValue/total};
+});
+
+const typeMap = Object.fromEntries(TYPES.map(t=>[t.key,t]));
+const inputContainer = document.getElementById("inputs");
+const playersContainer = document.getElementById("players");
+
+function fmtNum(v){return v.toFixed(1).replace(/\.0$/,"")}
+function pct(units){return fmtNum(units*100/PLAYER_CAPACITY)+"%"}
+function money(v){return "$"+Math.round(v).toLocaleString("en-US")}
+
+function createInputs(){
+  inputContainer.innerHTML = TYPES.map(t=>{
+    const countText = t.sequence.length===1 ? "每幅1次" : `每堆${t.sequence.length}下`;
+    return `<div class="row">
+      <div>
+        <div class="name"><span class="ico">${t.icon}</span><span>${t.name}</span></div>
+        <div class="meta">每${t.noun}${pct(t.totalUnits)} · ${countText} · 约${money(t.averageValue)}/${t.noun}</div>
+      </div>
+      <div class="numBox">
+        <button type="button" data-step="-1" data-key="${t.key}">−</button>
+        <input id="${t.key}" type="number" min="0" max="${MAX_COUNT}" step="1" value="0" inputmode="numeric" />
+        <button type="button" data-step="1" data-key="${t.key}">+</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function getCounts(){
+  const counts = {};
+  for(const t of TYPES){
+    const v = Number(document.getElementById(t.key).value);
+    counts[t.key] = Number.isFinite(v) ? Math.max(0, Math.min(MAX_COUNT, Math.floor(v))) : 0;
+  }
+  return counts;
+}
+
+function setCounts(values){
+  for(const t of TYPES) document.getElementById(t.key).value = values[t.key] ?? 0;
+  markDirty("参数已修改，点击“生成方案”。");
+}
+
+function buildPiles(counts){
+  const piles = [];
+  for(const t of TYPES){
+    for(let i=0;i<counts[t.key];i++){
+      piles.push({
+        id:`${t.key}-${i+1}`,
+        typeKey:t.key,
+        typeName:t.name,
+        pileNumber:i+1,
+        order:t.order,
+        sequence:[...t.sequence],
+        next:0,
+        users:0,
+        valuePerUnit:t.valuePerUnit,
+        clamp:t.clamp
+      });
+    }
+  }
+  return piles;
+}
+
+function clonePiles(piles){
+  return piles.map(p=>({...p, sequence:[...p.sequence]}));
+}
+
+function remainingTotalUnits(piles){
+  return piles.reduce((sum,p)=>sum+p.sequence.slice(p.next).reduce((a,b)=>a+b,0),0);
+}
+
+function segmentUnits(pile, startIndex, count, remainingCapacity){
+  let nominal = 0;
+  let actual = 0;
+  let clamped = false;
+  let lastNominal = 0;
+  let lastActual = 0;
+
+  for(let i=0;i<count;i++){
+    const unit = pile.sequence[startIndex+i];
+    nominal += unit;
+    lastNominal = unit;
+
+    if(pile.clamp){
+      const room = remainingCapacity - actual;
+
+      if(unit >= room){
+        actual += room;
+        lastActual = room;
+        clamped = unit > room;
+        return {nominal, actual, clamped, lastNominal, lastActual};
+      }
+
+      actual += unit;
+      lastActual = unit;
+    }else{
+      if(actual + unit > remainingCapacity) return null;
+      actual += unit;
+      lastActual = unit;
+    }
+  }
+
+  return {nominal, actual, clamped, lastNominal, lastActual};
+}
+
+function makeSegment(piles, pileIndex, count, currentLoad){
+  const pile = piles[pileIndex];
+  const remaining = PLAYER_CAPACITY - currentLoad;
+  const info = segmentUnits(pile, pile.next, count, remaining);
+
+  if(!info || info.actual <= 0) return null;
+
+  return {
+    pileIndex,
+    pileId:pile.id,
+    typeKey:pile.typeKey,
+    typeName:pile.typeName,
+    pileNumber:pile.pileNumber,
+    start:pile.next+1,
+    end:pile.next+count,
+    count,
+    nominalUnits:info.nominal,
+    units:info.actual,
+    clamped:info.clamped,
+    lastNominal:info.lastNominal,
+    lastActual:info.lastActual,
+    value:info.actual * pile.valuePerUnit,
+    order:pile.order
+  };
+}
+
+function applyPlan(piles, plan){
+  const next = clonePiles(piles);
+
+  for(const seg of plan.segments){
+    const pile = next[seg.pileIndex];
+    pile.next += seg.count;
+    pile.users += 1;
+  }
+
+  return next;
+}
+
+function splitCount(piles){
+  return piles.filter(p=>p.users>1).length;
+}
+
+function sameTypePilePenalty(segments){
+  const byType = new Map();
+
+  for(const s of segments){
+    if(!byType.has(s.typeKey)) byType.set(s.typeKey, new Set());
+    byType.get(s.typeKey).add(s.pileId);
+  }
+
+  let penalty = 0;
+  for(const set of byType.values()) penalty += Math.max(0, set.size-1);
+  return penalty;
+}
+
+function playerPileTouches(player){
+  return new Set(player.segments.map(s=>s.pileId)).size;
+}
+
+function resultSameTypePenalty(players){
+  return players.reduce((sum,p)=>sum+sameTypePilePenalty(p.segments||[]),0);
+}
+
+function resultSegmentPenalty(players){
+  return players.reduce((sum,p)=>sum+(p.segments||[]).length,0);
+}
+
+function availablePileIndexes(piles, minOrder, usedPileIds){
+  const byType = new Map();
+
+  piles.forEach((p, idx)=>{
+    if(p.next >= p.sequence.length) return;
+    if(p.users >= 2) return;
+    if(p.order < minOrder) return;
+    if(usedPileIds.has(p.id)) return;
+
+    if(!byType.has(p.typeKey)) byType.set(p.typeKey, []);
+    byType.get(p.typeKey).push(idx);
+  });
+
+  const result = [];
+
+  for(const [, indexes] of byType.entries()){
+    indexes.sort((a,b)=>
+      piles[a].users-piles[b].users ||
+      piles[b].next-piles[a].next ||
+      piles[a].pileNumber-piles[b].pileNumber
+    );
+    result.push(...indexes.slice(0, 3));
+  }
+
+  return result.sort((a,b)=>
+    piles[a].order-piles[b].order ||
+    piles[a].users-piles[b].users ||
+    typeMap[piles[a].typeKey].priority-typeMap[piles[b].typeKey].priority ||
+    piles[a].pileNumber-piles[b].pileNumber
+  );
+}
+
+function countOptionsForPile(pile, load){
+  const remainingGrabs = pile.sequence.length - pile.next;
+  const options = new Set();
+
+  if(remainingGrabs <= 0) return [];
+
+  options.add(remainingGrabs);
+
+  let units = 0;
+  for(let count=1; count<=remainingGrabs; count++){
+    const unit = pile.sequence[pile.next + count - 1];
+    units += unit;
+
+    if(load + units >= PLAYER_CAPACITY){
+      options.add(count);
+      if(count > 1) options.add(count-1);
+      break;
+    }
+  }
+
+  options.add(1);
+
+  if(remainingGrabs >= 2) options.add(Math.ceil(remainingGrabs/2));
+
+  return [...options]
+    .filter(count=>count>=1 && count<=remainingGrabs)
+    .sort((a,b)=>b-a);
+}
+
+function profitBucket(value){
+  return Math.floor(value / PROFIT_VALUE_BUCKET);
+}
+
+function planScore(plan){
+  const touches = new Set(plan.segments.map(s=>s.pileId)).size;
+  const typePenalty = sameTypePilePenalty(plan.segments);
+  const segs = plan.segments.length;
+
+  if(mode === "profit"){
+    // 收益模式实际改为“少堆数优先”：先容量，再少接触堆，再收益。
+    return plan.units*100000000
+      - touches*5000000
+      - typePenalty*1200000
+      - segs*500000
+      + plan.value;
+  }
+
+  return plan.units*100000000
+    - touches*5000000
+    - typePenalty*1200000
+    - segs*500000
+    + plan.value;
+}
+
+function trimPlans(plans, limit){
+  const map = new Map();
+
+  for(const plan of plans){
+    const sig = plan.segments.map(s=>`${s.pileId}:${s.start}-${s.end}:${s.clamped?1:0}`).join("|");
+    const old = map.get(sig);
+    if(!old || planScore(plan) > planScore(old)) map.set(sig, plan);
+  }
+
+  return [...map.values()]
+    .sort((a,b)=>planScore(b)-planScore(a))
+    .slice(0, limit);
+}
+
+function generatePlayerPlans(piles){
+  let beam = [{
+    segments:[],
+    units:0,
+    value:0,
+    minOrder:0,
+    usedPileIds:new Set()
+  }];
+
+  const completed = [];
+
+  for(let depth=0; depth<MAX_TOUCHES; depth++){
+    const nextBeam = [];
+
+    for(const state of beam){
+      completed.push(state);
+
+      if(state.units >= PLAYER_CAPACITY) continue;
+
+      const indexes = availablePileIndexes(piles, state.minOrder, state.usedPileIds);
+
+      for(const pileIndex of indexes){
+        const pile = piles[pileIndex];
+
+        for(const count of countOptionsForPile(pile, state.units)){
+          const seg = makeSegment(piles, pileIndex, count, state.units);
+          if(!seg) continue;
+
+          const nextUsed = new Set(state.usedPileIds);
+          nextUsed.add(pile.id);
+
+          const nextState = {
+            segments:state.segments.concat(seg),
+            units:Math.min(PLAYER_CAPACITY, state.units + seg.units),
+            value:state.value + seg.value,
+            minOrder:pile.order,
+            usedPileIds:nextUsed
+          };
+
+          nextBeam.push(nextState);
+        }
+      }
+    }
+
+    beam = trimPlans(nextBeam, PLAYER_PLAN_BEAM);
+    if(!beam.length) break;
+  }
+
+  completed.push(...beam);
+
+  const plans = trimPlans(
+    completed.map(p=>({
+      segments:p.segments,
+      units:p.units,
+      value:p.value
+    })),
+    PLAYER_PLAN_OUTPUT
+  );
+
+  if(!plans.length || plans[0].segments.length !== 0){
+    plans.push({segments:[], units:0, value:0});
+  }
+
+  return plans;
+}
+
+function compareResult(a,b){
+  if(!b) return true;
+
+  const typeA = a.sameTypePenalty ?? resultSameTypePenalty(a.players);
+  const typeB = b.sameTypePenalty ?? resultSameTypePenalty(b.players);
+  const segA = a.segmentPenalty ?? resultSegmentPenalty(a.players);
+  const segB = b.segmentPenalty ?? resultSegmentPenalty(b.players);
+
+  // 新目标顺序：
+  // 1. 装载容量；2. 每人最多接触堆数；3. 总接触堆数；
+  // 4. 同类散堆；5. 分段数；6. 同堆拆分；7. 收益。
+  if(a.units !== b.units) return a.units > b.units;
+  if(a.maxPileTouches !== b.maxPileTouches) return a.maxPileTouches < b.maxPileTouches;
+  if(a.totalPileTouches !== b.totalPileTouches) return a.totalPileTouches < b.totalPileTouches;
+  if(typeA !== typeB) return typeA < typeB;
+  if(segA !== segB) return segA < segB;
+  if(a.splitCount !== b.splitCount) return a.splitCount < b.splitCount;
+  if(Math.abs(a.value-b.value) > 0.001) return a.value > b.value;
+  return false;
+}
+
+function stateScore(state){
+  const units = state.players.reduce((sum,p)=>sum+p.units,0);
+  const value = state.players.reduce((sum,p)=>sum+p.value,0);
+  const maxPileTouches = state.players.length
+    ? Math.max(...state.players.map(playerPileTouches))
+    : 0;
+  const totalPileTouches = state.players.reduce((sum,p)=>sum+playerPileTouches(p),0);
+  const typePenalty = resultSameTypePenalty(state.players);
+  const segmentPenalty = resultSegmentPenalty(state.players);
+
+  return units*100000000
+    - maxPileTouches*9000000
+    - totalPileTouches*2500000
+    - typePenalty*1600000
+    - segmentPenalty*800000
+    + value;
+}
+
+function trimGlobalStates(states){
+  const map = new Map();
+
+  for(const state of states){
+    const pileSig = state.piles.map(p=>`${p.next}/${p.users}`).join(",");
+    const playerSig = state.players.map(p=>p.units).join(",");
+    const sig = `${pileSig}|${playerSig}`;
+    const old = map.get(sig);
+    if(!old || stateScore(state) > stateScore(old)) map.set(sig, state);
+  }
+
+  return [...map.values()]
+    .sort((a,b)=>stateScore(b)-stateScore(a))
+    .slice(0, GLOBAL_BEAM);
+}
+
+function buildResult(players, piles, nodeCount){
+  const units = players.reduce((sum,p)=>sum+p.units,0);
+  const value = players.reduce((sum,p)=>sum+p.value,0);
+  const pileTouches = players.map(playerPileTouches);
+
+  return {
+    players,
+    piles,
+    units,
+    value,
+    splitCount:splitCount(piles),
+    maxPileTouches:pileTouches.length ? Math.max(...pileTouches) : 0,
+    totalPileTouches:pileTouches.reduce((a,b)=>a+b,0),
+    sameTypePenalty:resultSameTypePenalty(players),
+    segmentPenalty:resultSegmentPenalty(players),
+    nodeCount
+  };
+}
+
+function searchBest(initialPiles){
+  let states = [{
+    piles:clonePiles(initialPiles),
+    players:[],
+    nodeCount:0
+  }];
+
+  for(let playerIndex=0; playerIndex<playerCount; playerIndex++){
+    const nextStates = [];
+
+    for(const state of states){
+      const plans = generatePlayerPlans(state.piles);
+
+      for(const plan of plans){
+        const nextPlayers = state.players.concat({
+          id:playerIndex+1,
+          units:plan.units,
+          value:plan.value,
+          segments:plan.segments
+        });
+
+        const nextPiles = applyPlan(state.piles, plan);
+
+        nextStates.push({
+          piles:nextPiles,
+          players:nextPlayers,
+          nodeCount:state.nodeCount + plans.length
+        });
+      }
+    }
+
+    states = trimGlobalStates(nextStates);
+  }
+
+  let best = null;
+
+  for(const state of states){
+    const result = buildResult(state.players, state.piles, state.nodeCount);
+    if(compareResult(result, best)) best = result;
+  }
+
+  return best || buildResult(
+    Array.from({length:playerCount},(_,i)=>({id:i+1,units:0,value:0,segments:[]})),
+    initialPiles,
+    0
+  );
+}
+
+function calculateResult(){
+  const start = performance.now();
+  const counts = getCounts();
+  const piles = buildPiles(counts);
+  const best = searchBest(piles);
+  const elapsed = performance.now() - start;
+  const availableUnits = piles.reduce((sum,p)=>sum+p.sequence.reduce((a,b)=>a+b,0),0);
+
+  return {
+    counts,
+    availableUnits,
+    usedUnits:best.units,
+    value:best.value,
+    players:best.players,
+    piles:best.piles,
+    splitCount:best.splitCount,
+    maxPileTouches:best.maxPileTouches,
+    totalPileTouches:best.totalPileTouches,
+    sameTypePenalty:best.sameTypePenalty,
+    segmentPenalty:best.segmentPenalty,
+    elapsed,
+    nodeCount:best.nodeCount || 0,
+    mode
+  };
+}
+
+function segmentLabel(seg){
+  const type = typeMap[seg.typeKey];
+  const word = type.sequence.length===1 ? "次" : "下";
+  const range = seg.start===seg.end ? `${seg.start}` : `${seg.start}—${seg.end}`;
+  let text = `${seg.typeName}第${seg.pileNumber}${type.noun}第${range}${word}`;
+
+  if(seg.clamped){
+    text += `，末下补满：计入${seg.lastActual}/${seg.lastNominal}`;
+  }
+
+  return text;
+}
+
+function renderPlayers(players){
+  playersContainer.innerHTML = players.map(player=>{
+    const pileCount = new Set(player.segments.map(s=>s.pileId)).size;
+    const loot = player.segments.map(seg=>{
+      const type = typeMap[seg.typeKey];
+      const label = type.sequence.length===1 ? `${seg.count}幅` : `${seg.count}下`;
+
+      return `<div class="line">
+        <div class="lineMain"><span>${seg.typeName} ${label}</span><span>${pct(seg.units)}</span></div>
+        <div class="detail">${segmentLabel(seg)} · 约${money(seg.value)}</div>
+      </div>`;
+    }).join("");
+
+    return `<article class="player">
+      <div class="ptop">
+        <div class="ptitle"><span class="num">${player.id}</span>${player.id}号玩家</div>
+        <strong>${pct(player.units)} · ${pileCount}堆</strong>
+      </div>
+      <div class="bar"><div style="width:${Math.min(100,player.units*100/PLAYER_CAPACITY)}%"></div></div>
+      <div class="loot">${loot || '<div class="empty">本局暂无可分配目标</div>'}</div>
+    </article>`;
+  }).join("");
+}
+
+function renderUnused(piles){
+  const tags = [];
+
+  for(const pile of piles){
+    if(pile.next >= pile.sequence.length) continue;
+
+    const type = typeMap[pile.typeKey];
+
+    if(type.sequence.length===1){
+      tags.push(`${type.name}第${pile.pileNumber}幅`);
+    }else if(pile.next===0){
+      tags.push(`${type.name}第${pile.pileNumber}堆：未拿，共${pile.sequence.length}下`);
+    }else{
+      tags.push(`${type.name}第${pile.pileNumber}堆：已拿${pile.next}下，剩第${pile.next+1}—${pile.sequence.length}下`);
+    }
+  }
+
+  document.getElementById("unusedList").innerHTML = tags.length
+    ? tags.map(t=>`<span class="tag">${t}</span>`).join("")
+    : '<span class="tag">已全部纳入方案</span>';
+}
+
+function renderResult(result){
+  latestResult = result;
+
+  const fullPlayers = result.players.filter(p=>p.units===PLAYER_CAPACITY).length;
+
+  document.getElementById("availableMetric").textContent = pct(result.availableUnits);
+  document.getElementById("usedMetric").textContent = pct(result.usedUnits);
+  document.getElementById("fullMetric").textContent = `${fullPlayers} / ${playerCount}`;
+  document.getElementById("valueMetric").textContent = money(result.value);
+
+  const banner = document.getElementById("statusBanner");
+  const mark = banner.querySelector(".mark");
+  const title = document.getElementById("statusTitle");
+  const text = document.getElementById("statusText");
+
+  if(fullPlayers === playerCount){
+    banner.classList.remove("warn");
+    mark.textContent = "✓";
+    title.textContent = `可以达成${playerCount}人满载`;
+  }else{
+    banner.classList.add("warn");
+    mark.textContent = "!";
+    title.textContent = `当前方案可装满${fullPlayers}/${playerCount}人`;
+  }
+
+  const modeText = result.mode==="strict" ? "满包优先" : "少堆数优先";
+  text.textContent = `${modeText}；收益${money(result.value)}；拆分${result.splitCount}堆；每人最多接触${result.maxPileTouches}堆；同类散堆${result.sameTypePenalty}; 耗时${fmtNum(result.elapsed)}ms。`;
+
+  renderPlayers(result.players);
+  renderUnused(result.piles);
+}
+
+function calculateAndRender(){
+  renderResult(calculateResult());
+}
+
+function renderIdle(title="等待生成方案", text="普通物资可补满截断；优先让每个人接触堆数最少。"){
+  latestResult = null;
+  document.getElementById("availableMetric").textContent = "—";
+  document.getElementById("usedMetric").textContent = "—";
+  document.getElementById("fullMetric").textContent = `0 / ${playerCount}`;
+  document.getElementById("valueMetric").textContent = "—";
+
+  const banner = document.getElementById("statusBanner");
+  banner.classList.add("warn");
+  banner.querySelector(".mark").textContent = "!";
+  document.getElementById("statusTitle").textContent = title;
+  document.getElementById("statusText").textContent = text;
+  playersContainer.innerHTML = "";
+  document.getElementById("unusedList").innerHTML = '<span class="tag">点击“生成方案”后显示</span>';
+}
+
+function markDirty(message="参数已修改，点击“生成方案”。"){
+  renderIdle("参数已修改", message);
+}
+
+function buildCopyText(result){
+  const fullPlayers = result.players.filter(p=>p.units===PLAYER_CAPACITY).length;
+  const lines = [
+    `佩里科岛${playerCount}人背包装填方案`,
+    `模式：${result.mode==="strict"?"满包优先":"收益"}`,
+    `满包人数：${fullPlayers}/${playerCount}`,
+    `总装载：${pct(result.usedUnits)}`,
+    `预计收益：${money(result.value)}`,
+    `规则：岛外物资 → 画作 → 黄金；普通物资末下可补满截断；同一堆最多2人；每人接触堆数最少优先`,
+    ""
+  ];
+
+  for(const player of result.players){
+    const pileCount = new Set(player.segments.map(s=>s.pileId)).size;
+    const parts = player.segments.map(s=>`${segmentLabel(s)}（${s.count}${typeMap[s.typeKey].sequence.length===1?"幅":"下"}）`);
+
+    lines.push(`${player.id}号：${parts.length?parts.join(" + "):"无"}（${pct(player.units)}，涉及${pileCount}堆，约${money(player.value)}）`);
+  }
+
+  return lines.join("\n");
+}
+
+async function copyResult(){
+  if(!latestResult){
+    showToast("请先点击“生成方案”");
+    return;
+  }
+
+  const text = buildCopyText(latestResult);
+
+  try{
+    await navigator.clipboard.writeText(text);
+  }catch(error){
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
+
+  showToast("方案已复制");
+}
+
+function showToast(message){
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.add("show");
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(()=>toast.classList.remove("show"),1500);
+}
+
+document.addEventListener("click", event=>{
+  const countButton = event.target.closest("[data-player-count]");
+  if(countButton){
+    const next = Number(countButton.dataset.playerCount);
+
+    if(Number.isInteger(next) && next>=2 && next<=4){
+      playerCount = next;
+      document.querySelectorAll("[data-player-count]").forEach(button=>{
+        button.classList.toggle("active", Number(button.dataset.playerCount)===playerCount);
+      });
+      markDirty(`人数已改为${playerCount}人，点击“生成方案”。`);
+    }
+  }
+
+  const modeButton = event.target.closest("[data-mode]");
+  if(modeButton){
+    mode = modeButton.dataset.mode;
+    document.querySelectorAll("[data-mode]").forEach(button=>{
+      button.classList.toggle("active", button.dataset.mode===mode);
+    });
+    markDirty(`模式已切换为${mode==="strict"?"满包优先":"收益"}，点击“生成方案”。`);
+  }
+
+  const stepButton = event.target.closest("[data-step]");
+  if(stepButton){
+    const input = document.getElementById(stepButton.dataset.key);
+    const value = Number(input.value || 0) + Number(stepButton.dataset.step);
+    input.value = Math.max(0, Math.min(MAX_COUNT, Math.floor(value)));
+    markDirty();
+  }
+});
+
+inputContainer.addEventListener("input", event=>{
+  if(!event.target.matches("input[type='number']")) return;
+
+  const value = Number(event.target.value);
+  if(!Number.isFinite(value) || value<0) event.target.value = 0;
+  if(value>MAX_COUNT) event.target.value = MAX_COUNT;
+
+  markDirty();
+});
+
+document.getElementById("calculateBtn").addEventListener("click", calculateAndRender);
+document.getElementById("copyBtn").addEventListener("click", copyResult);
+document.getElementById("clearBtn").addEventListener("click", ()=>setCounts({}));
+
+createInputs();
+renderIdle();
 </script>
 </body>
 </html>
